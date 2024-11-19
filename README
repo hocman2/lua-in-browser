@@ -1,0 +1,43 @@
+A minimal project to run lua in browser client side. It builds the real Lua core as WASM along with a custom made luawasmmodule.c file for WASM API
+Only tested in browser for now
+
+## How to use
+`./build.sh` to generate a lua.js and lua.wasm file (requires emsdk)
+Drop these files in any web project then:
+1. `import Module from "lua.js"`
+2. Either `const lua = await Module()` or `Module().then((lua) => { ... })`
+
+Console log that object to see what functions are available, for now you need to manually copy the content of the lua file in the wasm memory and call `_executeLua(ptr)`
+All of Lua standard library should work (even IO, but it's not persistent storage)
+
+## Minimal working example
+```js
+Module().then((lua) => {
+    // First we need to create a lua state like in the C Api
+    lua._createState();
+
+    // Define some lua code, it can be anything, even the content of a file uploaded by the user
+    // What's important is that we get this data as a byte array
+    const luaCode = 'print("Hello from lua")';
+    const encoder = new TextEncoder();
+    const luaCodeByteArray = encoder.encode(luaCode);
+
+    // Allocate some memory in the WASM module the size of the lua code
+    const ptr = lua._malloc(luaCode.length);
+    // Create a TypedArray that views the memory we were allocated on the line above
+    const wasmMemory = new Uint8Array(lua.HEAP8.buffer, ptr, luaCode.length);
+    // Copy the actual code bytes in the WASM Module's memory
+    wasmMemory.set(luaCodeByteArray);
+
+    // Call the execute function with our ptr
+    lua._executeLua(ptr);
+
+    // Good practice stuff
+    lua._free(ptr);
+    lua._closeState();
+});
+```
+
+## TODO
+- Create a TS interface to make the usage less tedious
+- Test in Node environment
