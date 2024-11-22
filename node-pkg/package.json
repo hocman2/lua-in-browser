@@ -1,0 +1,21 @@
+{
+  "name": "lua-in-browser",
+  "version": "0.1.0",
+  "description": "Allows lua execution client side using a wasm compiled binaries of the lua core",
+  "main": "dist/index.js",
+  "files": ["dist/*"],
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "scripting",
+    "script",
+    "lua",
+    "client"
+  ],
+  "author": "ziziman",
+  "license": "ISC",
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}
