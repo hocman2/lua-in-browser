@@ -1,2 +1,4 @@
 dist/
 node_modules/
+src/lua-module.js
+src/*.d.ts
