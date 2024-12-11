@@ -1,6 +1,8 @@
+// To understand why we have this weirdness, take a look at the build.sh file for lua-in-browser
 import Module from "./lua-module.js"
 import { LUA_MULTRET, StatusCode, lua_State } from "./lua-module.js";
-import * as Memory from "./wasm-mem-interface.js"
+
+import * as WMem from "./wasm-mem-interface.js"
 import { Ptr } from "./wasm-mem-interface.js";
 
 export type LuaStateHandle = number;
@@ -39,10 +41,7 @@ export function onModuleReady(cb: () => void) {
  * Load some code in a given lua state, ready for execution
  */
 export function load(stateHandle: LuaStateHandle, code: string) {
-  if (!luaStates.has(stateHandle))
-    throw new Error("Failed to find an active state for the given handle");
-
-  let {L, codePtr: ptr} = luaStates.get(stateHandle)!;
+  let { L, codePtr: ptr } = getStateOrFail(stateHandle);
 
   // Remove previously loaded code if there is any
   if (ptr) {
@@ -50,7 +49,7 @@ export function load(stateHandle: LuaStateHandle, code: string) {
     M._free(ptr);
   }
 
-  ptr = Memory.pushString(M, code);
+  ptr = WMem.pushString(M, code);
   luaStates.set(stateHandle, {L, codePtr:ptr});
 
   M._luaL_loadstring(L, ptr);
@@ -60,16 +59,12 @@ export function load(stateHandle: LuaStateHandle, code: string) {
  * Execute code that has been previously loaded in the given state
  */
 export function execute(stateHandle: LuaStateHandle) {
+  let {L, codePtr:ptr} = getStateOrFail(stateHandle);
 
-  if (!luaStates.has(stateHandle))
-    throw new Error("Failed to find an active state for the given handle");
-
-  let {L, codePtr:ptr} = luaStates.get(stateHandle)!;
-  
   if (ptr) {
     if (M._lua_pcall(L, 0, LUA_MULTRET, 0) != StatusCode.OK) {
       const errorPtr = M._lua_tostring(L, -1);
-      const error = Memory.fetchString(M, errorPtr);
+      const error = WMem.fetchString(M, errorPtr);
       console.error("Lua error: ", error)
       M._lua_pop(L, 1);
     }
@@ -102,16 +97,27 @@ export function freeState(stateHandle: LuaStateHandle) {
 
   const {L, codePtr} = luaStates.get(stateHandle)!;
   M._lua_close(L);
-  if (codePtr) {
+  if (codePtr)
     M._free(codePtr);
-  }
   luaStates.delete(stateHandle);
 }
 
+/**
+* Copies as best as possible a Javascript Object as a Lua table and makes it
+available globally
+*
+* These value types will throw an error if they exist:
+- functions
+- bigint
+- symbol
+*
+* null and undefined are pushed as nil
+* @param name
+*/
 export function pushGlobalObject(stateHandle: LuaStateHandle, obj: any, name: string) {
-  const {L} = getStateOrFail(stateHandle); 
+  const {L} = getStateOrFail(stateHandle);
   _pushObj(L, obj);
-  const namePtr = Memory.pushString(M, name);
+  const namePtr = WMem.pushString(M, name);
   M._lua_setglobal(L, namePtr);
   M._free(namePtr);
 }
@@ -125,8 +131,8 @@ function _pushObj(L: lua_State, obj: any) {
 
     if (Number.isNaN(keyConv)) {
       // The lua doc specifies that a pushed string is memcopied
-      // so it's safe to be freed after
-      const ptr = Memory.pushString(M, key);
+      // so it's safe to free it after
+      const ptr = WMem.pushString(M, key);
       M._lua_pushstring(L, ptr);
       M._free(ptr);
 
@@ -143,8 +149,9 @@ function _pushObj(L: lua_State, obj: any) {
 
     switch (typeof value) {
       case "string":
-        // not really pushing a key but it's the same logic
-        pushKeyToLua(value);
+        const ptr = WMem.pushString(M, value);
+        M._lua_pushstring(L, ptr);
+        M._free(ptr);
         break;
       case "number":
         if (Number.isInteger(value))
@@ -174,10 +181,10 @@ function _pushObj(L: lua_State, obj: any) {
     }
 
     M._lua_settable(L, -3);
-  }); 
+  });
 }
 
-(Module as any)()
+Module()
 .then((mod: any) => {
     M = mod;
     while (moduleReadyCallbacks.length)
