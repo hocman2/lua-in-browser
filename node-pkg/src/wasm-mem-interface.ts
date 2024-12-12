@@ -5,7 +5,16 @@ export type WasmModule = {
   _free: (ptr: Ptr) => void
 };
 
-export function fetchString(M: WasmModule, strStart: Ptr): string {
+let M!: WasmModule;
+
+/**
+* Call this before using any other function or it will bug out !!!
+*/
+export function setWasmModule(m: WasmModule) {
+  M = m;
+}
+
+export function fetchString(strStart: Ptr): string {
   let len = 0;
   while (M.HEAP8[strStart+len] != 0) {
     ++len;
@@ -16,7 +25,7 @@ export function fetchString(M: WasmModule, strStart: Ptr): string {
   return decoder.decode(byteArray);
 }
 
-export function pushString(M: WasmModule, str: string): Ptr {
+export function pushString(str: string): Ptr {
   str += '\0';
   const encoder = new TextEncoder();
   const bytes = encoder.encode(str);
