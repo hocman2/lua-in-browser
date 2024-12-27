@@ -1,5 +1,3 @@
-// Redefine some Lua constants
-export default Module;
 export const LUA_MULTRET = -1;
 export var StatusCode;
 (function (StatusCode) {

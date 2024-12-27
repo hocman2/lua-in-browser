@@ -2,15 +2,16 @@
 import Module from "./lua-module.js"
 import { LUA_MULTRET, StatusCode, lua_State } from "./lua-module.js";
 import { CollectionOfLuaValue, formatLikeLuaCollection, isCollection, LuaObject, LuaValue } from "./object-manipulation.js";
-import { _initPortalModule } from "./portal.js";
 
 import * as WMem from "./wasm-mem-interface.js"
 import { Ptr } from "./wasm-mem-interface.js";
 
+export const KEEP_CODE_LOADED = true;
 export type LuaStateHandle = lua_State;
 export type LuaState = {
   L: lua_State,
-  codePtr: Ptr|null
+  codePtr: Ptr|null,
+  persistentCode: boolean,
 }
 
 let M: any = null;
@@ -42,7 +43,7 @@ export function onModuleReady(cb: () => void) {
 /*
  * Load some code in a given lua state, ready for execution
  */
-export function load(stateHandle: LuaStateHandle, code: string) {
+export function load(stateHandle: LuaStateHandle, code: string, persistent:boolean = false) {
   let { L, codePtr: ptr } = getStateOrFail(stateHandle);
 
   // Remove previously loaded code if there is any
@@ -51,34 +52,51 @@ export function load(stateHandle: LuaStateHandle, code: string) {
     M._free(ptr);
   }
 
-  ptr = WMem.pushString(code);
-  luaStates.set(stateHandle, {L, codePtr:ptr});
+  if (persistent)
+    ptr = WMem.getOrAllocateString(code);
+  else  
+    ptr = WMem.pushString(code);
 
+  luaStates.set(stateHandle, {L, codePtr:ptr, persistentCode:persistent});
   M._luaL_loadstring(L, ptr);
 }
 
 /*
  * Execute code that has been previously loaded in the given state
+ * The code must be reloaded if another execution was to occur
  */
-export function execute(stateHandle: LuaStateHandle) {
-  let {L, codePtr:ptr} = getStateOrFail(stateHandle);
+export function execute(stateHandle: LuaStateHandle): false | {code: StatusCode, error: string} {
+  const state = getStateOrFail(stateHandle);
+  const {L, codePtr: ptr} = state;
 
   if (ptr) {
-    if (M._lua_pcall(L, 0, LUA_MULTRET, 0) != StatusCode.OK) {
+    const code = M._lua_pcall(L, 0, LUA_MULTRET, 0);
+    if (code != StatusCode.OK) {
       const errorPtr = M._lua_tostring(L, -1);
       const error = WMem.fetchString(errorPtr);
-      console.error("Lua error: ", error)
       M._lua_pop(L, 1);
+
+      if (!state.persistentCode)
+        M._free(ptr);
+
+      state.codePtr = null;
+      return { code, error };
     }
   } else {
     console.warn("No code loaded for the given state, nothing will be done");
   }
+
+  if (!state.persistentCode)
+    M._free(ptr);
+
+  state.codePtr = null;
+  return false;
 }
 
 /*
  * Create a lua state in which code can be loaded and executed from a raw string or a blob representing a file
  */
-export function luaCreateState(): LuaStateHandle {
+export function createState(): LuaStateHandle {
   if (!M)
     throw new Error("WASM Module is not initialized yet !");
 
@@ -86,14 +104,14 @@ export function luaCreateState(): LuaStateHandle {
   M._luaL_openlibs(L)
 
   let handle = ++luaStateHandles;
-  luaStates.set(handle, {L, codePtr: null});
+  luaStates.set(handle, {L, codePtr: null, persistentCode: false});
   return handle;
 }
 
 /*
  * Release a state from memory
  */
-export function luaFreeState(stateHandle: LuaStateHandle) {
+export function freeState(stateHandle: LuaStateHandle) {
   if (!luaStates.has(stateHandle))
     return;
 
@@ -102,6 +120,7 @@ export function luaFreeState(stateHandle: LuaStateHandle) {
   if (codePtr)
     M._free(codePtr);
   luaStates.delete(stateHandle);
+  WMem.freeEverything();
 }
 
 /**
@@ -117,54 +136,55 @@ available globally
 * @param name
 * @returns The pointer to the name of the global, for reusing it
 */
-export function luaPushGlobalValue(stateHandle: LuaStateHandle, obj: LuaValue, name: string|Ptr): Ptr {
+export function setGlobal(stateHandle: LuaStateHandle, name: string, value: LuaValue) {
   const {L} = getStateOrFail(stateHandle);
-  pushValue(L, obj);
-  const namePtr = (typeof name === "string") ? WMem.pushString(name) : name;
+  pushValue(L, value);
+  const namePtr = WMem.getOrAllocateString(name);
   M._lua_setglobal(L, namePtr);
-  return namePtr;
 }
 
-function pushValue(L: LuaStateHandle, obj: LuaValue) {
-  switch (typeof obj) {
+function pushValue(L: LuaStateHandle, v: LuaValue) {
+  switch (typeof v) {
     case "string":
-      const ptr = WMem.pushString(obj);
+      const ptr = WMem.pushString(v);
       M._lua_pushstring(L, ptr);
       M._free(ptr);
       break;
     case "number":
-      if (Number.isInteger(obj))
-        M._lua_pushinteger(L, obj);
+      if (Number.isInteger(v))
+        M._lua_pushinteger(L, v);
       else
-        M._lua_pushnumber(L, obj);
+        M._lua_pushnumber(L, v);
       break;
     case "bigint":
       throw new Error(`Not implemented type for object pushing: bigint`);
     case "boolean":
-      M._lua_pushboolean(L, (obj) ? 1 : 0);
+      M._lua_pushboolean(L, (v) ? 1 : 0);
       break;
     case "symbol":
       throw new Error(`Not implemented type for object pushing: symbol`);
     case "undefined":
     case "object":
-      if (!obj) {
+      if (!v) {
         M._lua_pushnil(L);
         break;
       }
       // collections are handled differently
-      if (isCollection(obj)) {
-        const formatted = formatLikeLuaCollection(obj as CollectionOfLuaValue);
+      if (isCollection(v)) {
+        const formatted = formatLikeLuaCollection(v as CollectionOfLuaValue);
         pushObj(L, formatted, true);
       } else {
-        let formatted = obj;
-        if (obj instanceof Map) {
-          formatted = formatLikeLuaCollection(obj);
+        let formatted = v;
+        if (v instanceof Map) {
+          formatted = formatLikeLuaCollection(v);
         }
         pushObj(L, formatted as LuaObject);
       }
       break;
     case "function":
-      throw new Error(`Not implemented type for object pushing: function`);
+      const fnPtr = WMem.getOrAllocateFunction(v, "ip");
+      M._lua_pushcfunction(L, fnPtr);
+      break;
   }
 }
 
@@ -202,7 +222,6 @@ Module()
   M = mod;
   // Allows us to use memory management helper functions
   WMem.setWasmModule(M);
-  _initPortalModule();
   while (moduleReadyCallbacks.length)
     moduleReadyCallbacks.pop()!();
 })

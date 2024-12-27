@@ -1,10 +1,4 @@
 // Redefine some Lua constants
-
-// We do this because whatever is in this file actually becomes lua-module.d.ts in the node-pkg
-// ... yes it's a bit out of place
-declare function Module(opts?: any): Promise<any>;
-export default Module;
-
 export type lua_State = number;
 export const LUA_MULTRET = -1;
 export enum StatusCode {

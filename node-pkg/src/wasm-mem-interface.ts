@@ -2,10 +2,14 @@ export type Ptr = number;
 export type WasmModule = {
   HEAP8: Uint8Array
   _malloc: (len: number) => Ptr,
-  _free: (ptr: Ptr) => void
+  _free: (ptr: Ptr) => void,
+  addFunction: (fn: Function, sigStr: string) => Ptr,
 };
 
 let M!: WasmModule;
+
+const allocatedStrings: Map<string, Ptr> = new Map();
+const allocatedFunctions: Map<Function, Ptr> = new Map();
 
 /**
 * Call this before using any other function or it will bug out !!!
@@ -25,12 +29,44 @@ export function fetchString(strStart: Ptr): string {
   return decoder.decode(byteArray);
 }
 
+export function getOrAllocateString(str: string): Ptr {
+  const ptrMaybe = allocatedStrings.get(str);
+  if (ptrMaybe)
+    return ptrMaybe;
+
+  const ptr = pushString(str);
+  allocatedStrings.set(str, ptr);
+  return ptr;
+}
+
+export function getOrAllocateFunction(fn: Function, sigStr: string): Ptr {
+  const ptrMaybe = allocatedFunctions.get(fn);
+  if (ptrMaybe)
+    return ptrMaybe;
+
+  const ptr = M.addFunction(fn, sigStr);
+  allocatedFunctions.set(fn, ptr);
+  return ptr;
+}
+
 export function pushString(str: string): Ptr {
-  str += '\0';
   const encoder = new TextEncoder();
-  const bytes = encoder.encode(str);
+  const bytes = encoder.encode(str + '\0');
   const ptr = M._malloc(bytes.length);
   const strSpace = new Uint8Array(M.HEAP8.buffer, ptr, bytes.byteLength);
   strSpace.set(bytes);
   return ptr;
+}
+
+export function freeEverything() {
+  for (const ptr of allocatedStrings.values()) {
+    M._free(ptr);
+  }
+
+  for (const ptr of allocatedFunctions.values()) {
+    M._free(ptr);
+  }
+
+  allocatedStrings.clear();
+  allocatedFunctions.clear();
 }

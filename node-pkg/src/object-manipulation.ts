@@ -1,5 +1,8 @@
+import { lua_State } from "./lua-module";
+
 export type Collection<T> = T[] | Set<T> | Map<string|number, T>;
 export type Primitive = string | boolean | number | undefined | null;
+export type JSFunction = (L: lua_State) => number;
 type ObjectOfLuaValue = { [K: string]: LuaValue };
 export type CollectionOfLuaValue = Collection<Primitive | ObjectOfLuaValue>;
 
@@ -8,6 +11,7 @@ export type CollectionOfLuaValue = Collection<Primitive | ObjectOfLuaValue>;
 */
 export type LuaValue =
   Primitive |
+  JSFunction |
   ObjectOfLuaValue |
   CollectionOfLuaValue |
   Map<string|number, LuaValue> |
@@ -49,6 +53,8 @@ export function purifyObject(obj: object): LuaObject {
       case "number":
       case "boolean":
       case "undefined":
+      // We'll trust typescript checking for functions, hoping nothing will break
+      case "function":
         purified[k] = v;
         break;
       case "object":

@@ -1,5 +1,3 @@
-declare function Module(opts?: any): Promise<any>;
-export default Module;
 export type lua_State = number;
 export declare const LUA_MULTRET = -1;
 export declare enum StatusCode {

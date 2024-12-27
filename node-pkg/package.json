@@ -4,6 +4,7 @@
   "description": "Allows lua execution client side using a wasm compiled binaries of the lua core",
   "main": "dist/index.js",
   "files": ["dist/*"],
+  "type": "module",
   "scripts": {
     "build": "tsc && cp src/*.d.ts dist/",
     "test": "echo \"Error: no test specified\" && exit 1"

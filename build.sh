@@ -148,8 +148,9 @@ if [ $? -ne 0 ]; then
   return $?
 fi
 
-emcc src/*.c -I./src -o lua-module.js -O0 -s WASM=1 -s MODULARIZE=1 -s EXPORT_ES6=1 -s ALLOW_MEMORY_GROWTH=1 \
+emcc src/*.c -I./src -o lua-module.js -O0 -s WASM=1 -s MODULARIZE=1 -s EXPORT_ES6=1 -s ALLOW_MEMORY_GROWTH=1 -s ALLOW_TABLE_GROWTH=1\
   -s EXPORTED_FUNCTIONS='['${exported_fns}']' \
+  -s EXPORTED_RUNTIME_METHODS='["addFunction"]' \
   --extern-pre-js=user-glue/extern-pre.js --post-js=user-glue/macro-defs.js
 
 if [ $? -ne 0 ]; then
@@ -161,3 +162,5 @@ mv lua-module.js node-pkg/src
 mv lua-module.wasm node-pkg/dist
 # this definition file contains some Lua types so it's pretty useful to have it available in the node-pkg
 cp user-glue/extern-pre.d.ts node-pkg/src/lua-module.d.ts
+echo "declare function Module(opts?: any): Promise<any>" >> node-pkg/src/lua-module.d.ts
+echo "export default Module;" >> node-pkg/src/lua-module.d.ts
