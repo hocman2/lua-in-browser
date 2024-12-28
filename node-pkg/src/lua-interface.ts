@@ -1,6 +1,6 @@
 // To understand why we have this weirdness, take a look at the build.sh file for lua-in-browser
 import Module from "./lua-module.js"
-import { LUA_MULTRET, StatusCode, lua_State } from "./lua-module.js";
+import { LUA_MULTRET, StatusCode, lua_State, LuaType } from "./lua-module.js";
 import { CollectionOfLuaValue, formatLikeLuaCollection, isCollection, LuaObject, LuaValue } from "./object-manipulation.js";
 
 import * as WMem from "./wasm-mem-interface.js"
@@ -128,7 +128,6 @@ export function freeState(stateHandle: LuaStateHandle) {
 available globally
 *
 * These value types will throw an error if they exist:
-- functions
 - bigint
 - symbol
 *
@@ -215,6 +214,109 @@ function pushObj(L: lua_State, obj: LuaObject, collection: boolean = false) {
     pushValue(L, (obj as any)[key])
     M._lua_settable(L, -3);
   });
+}
+
+/**
+* Retrieve a global from the lua state if it exists along with it's type.
+* Tables of adjacent indices starting with one are converted into an array
+* NIL is returned as null
+*/
+export function getGlobal(stateHandle: LuaStateHandle, name: string): [LuaValue, LuaType] {
+  const {L} = getStateOrFail(stateHandle);
+  const namePtr = WMem.getOrAllocateString(name);
+  const type = M._lua_getglobal(L, namePtr) as LuaType;
+  return [makeLuaValue(L, type), type];
+}
+
+function makeLuaValue(L: LuaStateHandle, type: LuaType): LuaValue {
+  let value: LuaValue;
+  switch (type) {
+    case LuaType.TBOOLEAN:
+      value = (M._lua_toboolean(L, -1) ? true : false); 
+      break;
+    case LuaType.TNUMBER:
+      if (M._lua_isinteger(L, -1))
+        value = M._lua_tointeger(L, -1);
+      else
+        value = M._lua_tonumber(L, -1);
+      break;
+    case LuaType.TSTRING:
+      value = WMem.fetchString(M._lua_tostring(L, -1));
+      break;
+    case LuaType.TTABLE:
+      value = makeLuaValueFromTable(L);
+      break;
+    case LuaType.TFUNCTION:
+      if (M._lua_iscfunction(L, -1)) {
+        const fnPtrMaybe = WMem.reverseFindFunction(M._lua_tocfunction(L, -1)); 
+        if (fnPtrMaybe)
+          value = fnPtrMaybe;
+        else
+          throw new Error("TFUNCTION is a C function that cannot be found in the function allocation table");
+      }
+      else
+        throw new Error("TFUNCTION is a Lua function and cannot be converted to JS");
+      break;
+    case LuaType.TUSERDATA:
+      throw new Error("TUSERDATA cannot be converted to a LuaValue");
+    case LuaType.TTHREAD:
+      throw new Error("TTHREAD cannot be converted to a LuaValue");
+    case LuaType.TLIGHTUSERDATA:
+      throw new Error("TLIGHTUSERDATA cannot be converted to a LuaValue");
+    case LuaType.TNIL:
+    default:
+      value = null;
+      break;
+  }
+
+  M._lua_pop(L, 1);
+  return value;
+} 
+
+function makeLuaValueFromTable(L: LuaStateHandle): LuaValue {
+  let obj: LuaValue = {};
+
+  // Push a space on the stack for the key
+  M._lua_pushnil(L);
+
+  while (M._lua_next(L, -2) != 0) {
+    const keyType = M._lua_type(L, -2) as LuaType;
+
+    let key: string|number;
+    switch(keyType) {
+      case LuaType.TNUMBER:
+        if (M._lua_isinteger(L, -2))
+          key = M._lua_tointeger(L, -2);
+        else
+          key = M._lua_tonumber(L, -2);
+        break;
+      case LuaType.TSTRING:
+          key = WMem.fetchString(M._lua_tostring(L, -2));
+        break;
+      default:
+        throw new Error(`Table has an unsupported key type: ${keyType}`);
+    }
+
+    const valueType = M._lua_type(L, -1) as LuaType;
+    obj[key] = makeLuaValue(L, valueType);
+  }
+
+  // return array if necessary
+  const keys = Object.keys(obj);
+  const arr = new Array(keys.length);
+  
+  for (let i = 0; i < keys.length; ++i) {
+    let key: string|number = keys[i];
+    
+    const keyNumMaybe = Number.parseFloat(key);
+    if (!Number.isNaN(keyNumMaybe))
+      key = keyNumMaybe;
+
+    if (typeof key !== "number" || key !== i + 1) return obj;
+    arr[i] = obj[key];
+  }
+
+  return arr;
 }
 
 Module()

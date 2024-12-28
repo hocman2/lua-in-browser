@@ -1,3 +1,5 @@
+import { JSFunction } from "./object-manipulation";
+
 export type Ptr = number;
 export type WasmModule = {
   HEAP8: Uint8Array
@@ -9,7 +11,7 @@ export type WasmModule = {
 let M!: WasmModule;
 
 const allocatedStrings: Map<string, Ptr> = new Map();
-const allocatedFunctions: Map<Function, Ptr> = new Map();
+const allocatedFunctions: Map<JSFunction, Ptr> = new Map();
 
 /**
 * Call this before using any other function or it will bug out !!!
@@ -39,7 +41,7 @@ export function getOrAllocateString(str: string): Ptr {
   return ptr;
 }
 
-export function getOrAllocateFunction(fn: Function, sigStr: string): Ptr {
+export function getOrAllocateFunction(fn: JSFunction, sigStr: string): Ptr {
   const ptrMaybe = allocatedFunctions.get(fn);
   if (ptrMaybe)
     return ptrMaybe;
@@ -47,6 +49,16 @@ export function getOrAllocateFunction(fn: Function, sigStr: string): Ptr {
   const ptr = M.addFunction(fn, sigStr);
   allocatedFunctions.set(fn, ptr);
   return ptr;
+}
+
+export function reverseFindFunction(cFnPtr: Ptr): JSFunction|undefined {
+  for (const [jsFn, cPtr] of allocatedFunctions.entries()) {
+    if (cPtr === cFnPtr) {
+      return jsFn;
+    }
+  }
+
+  return undefined;
 }
 
 export function pushString(str: string): Ptr {

@@ -44,3 +44,14 @@ export enum OperatorsComp {
   OPLT,
   OPLE
 }
+export enum LuaType {
+  TNIL = 0,
+  TBOOLEAN,
+  TLIGHTUSERDATA,
+  TNUMBER,
+  TSTRING,
+  TTABLE,
+  TFUNCTION,
+  TUSERDATA,
+  TTHREAD,
+}

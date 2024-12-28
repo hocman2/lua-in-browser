@@ -46,3 +46,15 @@ export var OperatorsComp;
     OperatorsComp[OperatorsComp["OPLT"] = 1] = "OPLT";
     OperatorsComp[OperatorsComp["OPLE"] = 2] = "OPLE";
 })(OperatorsComp || (OperatorsComp = {}));
+export var LuaType;
+(function (LuaType) {
+    LuaType[LuaType["TNIL"] = 0] = "TNIL";
+    LuaType[LuaType["TBOOLEAN"] = 1] = "TBOOLEAN";
+    LuaType[LuaType["TLIGHTUSERDATA"] = 2] = "TLIGHTUSERDATA";
+    LuaType[LuaType["TNUMBER"] = 3] = "TNUMBER";
+    LuaType[LuaType["TSTRING"] = 4] = "TSTRING";
+    LuaType[LuaType["TTABLE"] = 5] = "TTABLE";
+    LuaType[LuaType["TFUNCTION"] = 6] = "TFUNCTION";
+    LuaType[LuaType["TUSERDATA"] = 7] = "TUSERDATA";
+    LuaType[LuaType["TTHREAD"] = 8] = "TTHREAD";
+})(LuaType || (LuaType = {}));
