@@ -8,23 +8,22 @@ import { Ptr } from "./wasm-mem-interface.js";
 
 export const KEEP_CODE_LOADED = true;
 export type LuaStateHandle = lua_State;
-export type LuaState = {
-  L: lua_State,
+export type LuaStateMetadata = {
   codePtr: Ptr|null,
   persistentCode: boolean,
+  numArgsCurrentFn: number,
 }
 
 let M: any = null;
 const moduleReadyCallbacks: (()=>void)[] = [];
 
-let luaStateHandles: LuaStateHandle = 0;
-const luaStates: Map<LuaStateHandle, LuaState> = new Map();
+const luaStates: Map<LuaStateHandle, LuaStateMetadata> = new Map();
 
-function getStateOrFail(handle: LuaStateHandle): LuaState {
-  if (!luaStates.has(handle))
+function getStateDataOrFail(L: LuaStateHandle): LuaStateMetadata {
+  if (!luaStates.has(L))
     throw new Error("No active state found for the given handle");
 
-  return luaStates.get(handle)!;
+  return luaStates.get(L)!;
 }
 
 /*
@@ -43,8 +42,8 @@ export function onModuleReady(cb: () => void) {
 /*
  * Load some code in a given lua state, ready for execution
  */
-export function load(stateHandle: LuaStateHandle, code: string, persistent:boolean = false) {
-  let { L, codePtr: ptr } = getStateOrFail(stateHandle);
+export function load(L: LuaStateHandle, code: string, persistent:boolean = false) {
+  let { codePtr: ptr } = getStateDataOrFail(L);
 
   // Remove previously loaded code if there is any
   if (ptr) {
@@ -57,7 +56,7 @@ export function load(stateHandle: LuaStateHandle, code: string, persistent:boole
   else  
     ptr = WMem.pushString(code);
 
-  luaStates.set(stateHandle, {L, codePtr:ptr, persistentCode:persistent});
+  luaStates.set(L, {codePtr:ptr, persistentCode:persistent, numArgsCurrentFn:0});
   M._luaL_loadstring(L, ptr);
 }
 
@@ -65,9 +64,9 @@ export function load(stateHandle: LuaStateHandle, code: string, persistent:boole
  * Execute code that has been previously loaded in the given state
  * The code must be reloaded if another execution was to occur
  */
-export function execute(stateHandle: LuaStateHandle): false | {code: StatusCode, error: string} {
-  const state = getStateOrFail(stateHandle);
-  const {L, codePtr: ptr} = state;
+export function execute(L: LuaStateHandle): false | {code: StatusCode, error: string} {
+  const stateData = getStateDataOrFail(L);
+  const {codePtr: ptr} = stateData;
 
   if (ptr) {
     const code = M._lua_pcall(L, 0, LUA_MULTRET, 0);
@@ -76,20 +75,20 @@ export function execute(stateHandle: LuaStateHandle): false | {code: StatusCode,
       const error = WMem.fetchString(errorPtr);
       M._lua_pop(L, 1);
 
-      if (!state.persistentCode)
+      if (!stateData.persistentCode)
         M._free(ptr);
 
-      state.codePtr = null;
+      stateData.codePtr = null;
       return { code, error };
     }
   } else {
     console.warn("No code loaded for the given state, nothing will be done");
   }
 
-  if (!state.persistentCode)
+  if (!stateData.persistentCode)
     M._free(ptr);
 
-  state.codePtr = null;
+  stateData.codePtr = null;
   return false;
 }
 
@@ -103,24 +102,22 @@ export function createState(): LuaStateHandle {
   const L = M._luaL_newstate();
   M._luaL_openlibs(L)
 
-  let handle = ++luaStateHandles;
-  luaStates.set(handle, {L, codePtr: null, persistentCode: false});
-  return handle;
+  luaStates.set(L, {codePtr: null, persistentCode: false, numArgsCurrentFn: 0});
+  return L;
 }
 
 /*
  * Release a state from memory
  */
-export function freeState(stateHandle: LuaStateHandle) {
-  if (!luaStates.has(stateHandle))
+export function freeState(L: LuaStateHandle) {
+  M._lua_close(L);
+  const state = luaStates.get(L);
+  if (!state)
     return;
 
-  const {L, codePtr} = luaStates.get(stateHandle)!;
-  M._lua_close(L);
-  if (codePtr)
-    M._free(codePtr);
-  luaStates.delete(stateHandle);
-  WMem.freeEverything();
+  if (state.codePtr)
+    M._free(state.codePtr);
+  luaStates.delete(L);
 }
 
 /**
@@ -135,11 +132,9 @@ available globally
 * @param name
 * @returns The pointer to the name of the global, for reusing it
 */
-export function setGlobal(stateHandle: LuaStateHandle, name: string, value: LuaValue) {
-  const {L} = getStateOrFail(stateHandle);
+export function setGlobal(L: LuaStateHandle, name: string, value: LuaValue) {
   pushValue(L, value);
-  const namePtr = WMem.getOrAllocateString(name);
-  M._lua_setglobal(L, namePtr);
+  M._lua_setglobal(L, WMem.getOrAllocateString(name));
 }
 
 function pushValue(L: LuaStateHandle, v: LuaValue) {
@@ -187,7 +182,7 @@ function pushValue(L: LuaStateHandle, v: LuaValue) {
   }
 }
 
-function pushObj(L: lua_State, obj: LuaObject, collection: boolean = false) {
+function pushObj(L: LuaStateHandle, obj: LuaObject, collection: boolean = false) {
   const keys = Object.keys(obj);
   M._lua_createtable(L, collection ? keys.length : 0, !collection ? keys.length : 0);
 
@@ -221,34 +216,71 @@ function pushObj(L: lua_State, obj: LuaObject, collection: boolean = false) {
 * Tables of adjacent indices starting with one are converted into an array
 * NIL is returned as null
 */
-export function getGlobal(stateHandle: LuaStateHandle, name: string): [LuaValue, LuaType] {
-  const {L} = getStateOrFail(stateHandle);
-  const namePtr = WMem.getOrAllocateString(name);
-  const type = M._lua_getglobal(L, namePtr) as LuaType;
-  return [makeLuaValue(L, type), type];
+export function getGlobal(L: LuaStateHandle, name: string): [LuaValue, LuaType] {
+  const type = M._lua_getglobal(L, WMem.getOrAllocateString(name)) as LuaType;
+  const value = makeLuaValue(L, type);
+  M._lua_pop(L, 1);
+  return [value, type];
 }
 
-function makeLuaValue(L: LuaStateHandle, type: LuaType): LuaValue {
+/**
+ * Gets a global Lua or C/JS function and calls it.
+ * Fails if the value provided is not a function or does not exist or if the said function fails
+ */
+export function callGlobal(L: LuaStateHandle, name: string, ...args: LuaValue[]): LuaValue[]|null {
+  const type = M._lua_getglobal(L, WMem.getOrAllocateString(name)) as LuaType;
+  if (type !== LuaType.TFUNCTION)
+    throw new Error(`${name} is not a function`);
+
+  args.forEach((a) => pushValue(L, a));
+
+  const initialStackSize = M._lua_gettop(L);
+
+  if (M._lua_pcall(L, args.length, LUA_MULTRET, 0) != StatusCode.OK) {
+    const errorPtr = M._lua_tostring(L, -1);
+    const error = WMem.fetchString(errorPtr);
+    M._lua_pop(L, 2);
+    throw new Error(error);
+  } else {
+    const currentStackSize = M._lua_gettop(L);
+    const numResults = currentStackSize - (initialStackSize - 1 - args.length);
+    var results = new Array(numResults);
+    if (numResults > 0) {
+      for (let i = initialStackSize+1; i <= currentStackSize; ++i) {
+        const type = M._lua_type(L, i);
+        results.push(makeLuaValue(L, type, i));
+      }  
+      M._lua_pop(L, numResults);
+    }
+
+  }
+
+  M._lua_pop(L, initialStackSize - 1 - args.length);
+  return (results.length === 0) ? null : results;
+}
+
+function makeLuaValue(L: LuaStateHandle, type: LuaType, index?: number): LuaValue {
   let value: LuaValue;
+  index = index ?? -1;
   switch (type) {
     case LuaType.TBOOLEAN:
-      value = (M._lua_toboolean(L, -1) ? true : false); 
+      value = (M._lua_toboolean(L, index) ? true : false); 
       break;
     case LuaType.TNUMBER:
-      if (M._lua_isinteger(L, -1))
-        value = M._lua_tointeger(L, -1);
+      if (M._lua_isinteger(L, index))
+        value = M._lua_tointeger(L, index);
       else
-        value = M._lua_tonumber(L, -1);
+        value = M._lua_tonumber(L, index);
       break;
     case LuaType.TSTRING:
-      value = WMem.fetchString(M._lua_tostring(L, -1));
+      value = WMem.fetchString(M._lua_tostring(L, index));
       break;
     case LuaType.TTABLE:
-      value = makeLuaValueFromTable(L);
+      value = makeLuaValueFromTable(L, index);
       break;
     case LuaType.TFUNCTION:
-      if (M._lua_iscfunction(L, -1)) {
-        const fnPtrMaybe = WMem.reverseFindFunction(M._lua_tocfunction(L, -1)); 
+      if (M._lua_iscfunction(L, index)) {
+        const fnPtrMaybe = WMem.reverseFindFunction(M._lua_tocfunction(L, index)); 
         if (fnPtrMaybe)
           value = fnPtrMaybe;
         else
@@ -269,17 +301,17 @@ function makeLuaValue(L: LuaStateHandle, type: LuaType): LuaValue {
       break;
   }
 
-  M._lua_pop(L, 1);
   return value;
 } 
 
-function makeLuaValueFromTable(L: LuaStateHandle): LuaValue {
+function makeLuaValueFromTable(L: LuaStateHandle, index?: number): LuaValue {
+  index = index ? index-1 : -2;
   let obj: LuaValue = {};
 
   // Push a space on the stack for the key
   M._lua_pushnil(L);
 
-  while (M._lua_next(L, -2) != 0) {
+  while (M._lua_next(L, index) != 0) {
     const keyType = M._lua_type(L, -2) as LuaType;
 
     let key: string|number;
@@ -299,6 +331,7 @@ function makeLuaValueFromTable(L: LuaStateHandle): LuaValue {
 
     const valueType = M._lua_type(L, -1) as LuaType;
     obj[key] = makeLuaValue(L, valueType);
+    M._lua_pop(L, 1);
   }
 
   // return array if necessary
@@ -317,6 +350,18 @@ function makeLuaValueFromTable(L: LuaStateHandle): LuaValue {
   }
 
   return arr;
+}
+
+export function getJsFunctionArgs(L: LuaStateHandle): [LuaValue, LuaType][] {
+  const {numArgsCurrentFn: numArgs}= getStateDataOrFail(L);
+  const stackSize = M._lua_gettop(L);
+
+  const args = new Array(numArgs);
+  for (let i = stackSize - numArgs; i <= stackSize; ++i) {
+    const type = M._lua_type(L, i) as LuaType;
+    args.push([makeLuaValue(L, type, i), type]);
+  }
+  return args;
 }
 
 Module()
