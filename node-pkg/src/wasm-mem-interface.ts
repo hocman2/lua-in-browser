@@ -1,3 +1,4 @@
+// Exports a bunch of helper functions for working with wasm memory directly
 import { JSFunction } from "./object-manipulation";
 
 export type Ptr = number;

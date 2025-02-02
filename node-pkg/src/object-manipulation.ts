@@ -1,4 +1,5 @@
-import { lua_State } from "./lua-module";
+// Exports a bunch of types and helper functions to convert more easily from js->lua and vice versa
+import { lua_State } from "./lua-consts.js";
 
 export type Collection<T> = T[] | Set<T> | Map<string|number, T>;
 export type Primitive = string | boolean | number | undefined | null;
@@ -32,8 +33,6 @@ export type LuaObject =
 * It's time to purify this puny object 🔆⚔️
 * @returns A deep copy of an object where fields that can't be sent to Lua state are ignored.
 * Nested objects are also purified.
-*
-* View documentation of the PushableObject type for more information
 */
 export function purifyObject(obj: object): LuaObject {
   let purified: LuaObject = {};
