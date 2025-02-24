@@ -1,16 +1,17 @@
 // To understand why we have this weirdness, take a look at the build.sh file for lua-in-browser
 import Module from "./lua-module.js"
-import { LUA_MULTRET, StatusCode, lua_State, LuaType } from "./lua-consts.js";
+import { LUA_MULTRET, LUA_REGISTRYINDEX, StatusCode, lua_State, LuaType } from "./lua-consts.js";
 import { CollectionOfLuaValue, formatLikeLuaCollection, isCollection, LuaObject, LuaValue } from "./object-manipulation.js";
 
 import * as WMem from "./wasm-mem-interface.js"
-import { Ptr } from "./wasm-mem-interface.js";
 
 type WasmModule = any;
 
 export type LuaStateHandle = lua_State;
 export type LuaExecutionError = {code: StatusCode, error: string};
 export type CodeHandle = number;
+export type LuaFunction = { stackIndex: number };
+export type LuaReference<T> = number;
 export type LuaStateMetadata = {
   // there was some stuff here initially but there is nothing anymore
   // i'm leaving it on in case we need to attach some data to a lua state some day
@@ -39,7 +40,7 @@ export const lua = {
    */
   onModuleReady,
   /*
-   * Create a lua state in which code can be loaded and executed 
+   * Create a lua state in which code can be loaded and executed
    */
   createState,
   /*
@@ -50,7 +51,7 @@ export const lua = {
    * Loads a given code string in the WASM instance's memory. Users are responsible for
    * allocating, storing and freeing CodeHandles because we don't know if you will reuse
    * the same code for multiple executions.
-   * It should be noted that a code handle represents a string at a given time. If that 
+   * It should be noted that a code handle represents a string at a given time. If that
    * string changes, you are expected to release the old CodeHandle and create a new one
    */
   prepareCode,
@@ -81,12 +82,15 @@ export const lua = {
   * are logged as warnings and can be ignored
   */
   getGlobal,
-  
+
   /**
    * Gets a global Lua or C/JS function and calls it.
    * Fails if the value provided is not a function or does not exist or if the said function fails
    */
   callGlobal,
+  callLuaFunction,
+  createFnRef,
+  freeFnRef,
   getJsFunctionArgs,
 };
 
@@ -126,7 +130,7 @@ function freeState(L: LuaStateHandle) {
   luaStates.delete(L);
 }
 
-function prepareCode(L: LuaStateHandle, code: string): CodeHandle {
+function prepareCode(code: string): CodeHandle {
   const ptr = WMem.pushString(code);
   deliveredCodeHandles.add(ptr);
   return ptr;
@@ -250,11 +254,35 @@ function callGlobal(L: LuaStateHandle, name: string, ...args: LuaValue[]): [LuaV
     return [];
   }
 
+  return _callLuaFunction(L, ...args);
+}
+
+function callLuaFunction(L: LuaStateHandle, fn: LuaFunction|LuaReference<LuaFunction>, ...args: LuaValue[]): [LuaValue, LuaType][]|LuaExecutionError {
+  if (typeof fn === "number") {
+    M._lua_rawgeti(L, LUA_REGISTRYINDEX, fn);
+  } else {
+    M._lua_pushvalue(L, fn.stackIndex);
+  }
+
+  return _callLuaFunction(L, ...args);
+}
+
+function createFnRef(L: LuaStateHandle, fn: LuaFunction): LuaReference<LuaFunction> {
+  M._lua_pushvalue(L, fn.stackIndex);
+  const ref = M._luaL_ref(L, LUA_REGISTRYINDEX);
+  return ref;
+}
+
+function freeFnRef(L: LuaStateHandle, ref: LuaReference<LuaFunction>) {
+  M._luaL_unref(L, LUA_REGISTRYINDEX, ref);
+}
+
+function _callLuaFunction(L: LuaStateHandle, ...args: LuaValue[]): [LuaValue, LuaType][] | LuaExecutionError {
   const initialStackSize = M._lua_gettop(L);
   args.forEach((a) => _pushValue(L, a));
 
   const statusCode = M._lua_pcall(L, args.length, LUA_MULTRET, 0);
-  if (statusCode != StatusCode.OK) {
+  if (statusCode !== StatusCode.OK) {
     const errorPtr = M._lua_tostring(L, -1);
     const error = WMem.fetchString(errorPtr);
     M._lua_pop(L, 1);
@@ -270,7 +298,6 @@ function callGlobal(L: LuaStateHandle, name: string, ...args: LuaValue[]): [LuaV
       }
       M._lua_pop(L, numResults);
     }
-
   }
 
   return results;
@@ -303,8 +330,9 @@ function _makeLuaValue(L: LuaStateHandle, type: LuaType, index?: number): LuaVal
         else
           console.error("TFUNCTION is a C function that cannot be found in the function allocation table");
       }
-      else
-        console.warn("TFUNCTION is a Lua function and cannot be converted to JS yet");
+      else {
+        value = { stackIndex: index };
+      }
       break;
     case LuaType.TUSERDATA:
       console.warn("TUSERDATA cannot be converted to a LuaValue");
@@ -388,7 +416,7 @@ Module()
     M = mod;
     // Allows us to use memory management helper functions
     WMem.setWasmModule(M);
-    while (moduleReadyCallbacks.length)
+    while (moduleReadyCallbacks.reverse().length)
       moduleReadyCallbacks.pop()!();
   })
   .catch((e: Error) => console.error("Failed to load WASM module: ", e));

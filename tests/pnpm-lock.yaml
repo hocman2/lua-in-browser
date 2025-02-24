@@ -6,4 +6,8 @@ settings:
 
 importers:
 
-  .: {}
+  .:
+    dependencies:
+      lua-in-browser:
+        specifier: link:../node-pkg
+        version: link:../node-pkg
