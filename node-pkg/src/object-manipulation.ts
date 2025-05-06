@@ -1,4 +1,5 @@
 // Exports a bunch of types and helper functions to convert more easily from js->lua and vice versa
+
 import { lua_State } from "./lua-consts.js";
 
 export type Collection<T> = T[] | Set<T> | Map<string|number, T>;

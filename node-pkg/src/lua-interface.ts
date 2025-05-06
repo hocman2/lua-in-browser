@@ -25,7 +25,7 @@ const deliveredCodeHandles: Set<CodeHandle> = new Set();
 
 
 export const lua = {
-  /*
+  /**
    * Returns the raw WASM module. It contains all lua documented functions prefixed by an underscore '_' symbol
    * Using this leaves you in charge of allocating and deallocating memory inside the module.
    * Since you also have access to the heap and stack, no guarantees can be made regarding the correct behavior
@@ -33,32 +33,32 @@ export const lua = {
    */
   _raw,
 
-  /*
+  /**
    * Callback to be invoked when the WASM module has been loaded.
    * You don't need to await for the module to be ready everytime,
    * do this when you think you are importing the module for the first time
    */
   onModuleReady,
-  /*
+  /**
    * Create a lua state in which code can be loaded and executed
    */
   createState,
-  /*
+  /**
    * Release a state from memory
    */
   freeState,
-  /*
+  /**
    * Loads a given code string in the WASM instance's memory. Users are responsible for
-   * allocating, storing and freeing CodeHandles because we don't know if you will reuse
-   * the same code for multiple executions.
+   * allocating, storing and freeing CodeHandles because it can't be knowns if code will be reused through multiple executions.
+
    * It should be noted that a code handle represents a string at a given time. If that
    * string changes, you are expected to release the old CodeHandle and create a new one
    */
   prepareCode,
   releaseCode,
-  /*
+  /**
    * Execute some code previously loaded.
-   * Once this function is ran, you need to reload the code before calling execute again
+   * Note that if you were to call this function on the same lua state, that state will not be reset between each executions.
    */
   executeCode,
 
@@ -76,8 +76,10 @@ export const lua = {
   setGlobal,
   /**
   * Retrieve a global from the lua state if it exists along with it's type.
-  * Tables of adjacent indices starting with one are converted into an array
-  * NIL is returned as null
+  * Tables of adjacent indices starting with one are converted into an array.
+
+  * `nil` is returned as `null`
+
   * It may omit some Lua specific types that can't be converted into JS. Such failures
   * are logged as warnings and can be ignored
   */
@@ -85,12 +87,21 @@ export const lua = {
 
   /**
    * Gets a global Lua or C/JS function and calls it.
-   * Fails if the value provided is not a function or does not exist or if the said function fails
+   * Fails if the value at the given name is not a function or does not exist or if the said function fails
    */
   callGlobal,
+  /**
+   * Call a lua state function. The reference to a function can be created with `createFnRef`
+  */
   callLuaFunction,
+  /**
+   * Create a function reference from a LuaFunction value. These values are obtained by existing on the global scope or by being passed as args to C/JS Functions
+  */
   createFnRef,
   freeFnRef,
+  /**
+   * Utility method to be called from a C/JS function to retrieve the args that were passed from the lua state
+  */
   getJsFunctionArgs,
 };
 
@@ -140,7 +151,6 @@ function releaseCode(code: CodeHandle) {
   M._free(code);
   deliveredCodeHandles.delete(code);
 }
-
 
 function executeCode(L: LuaStateHandle, code: CodeHandle): null | LuaExecutionError {
   if (!deliveredCodeHandles.has(code)) {
@@ -331,6 +341,7 @@ function _makeLuaValue(L: LuaStateHandle, type: LuaType, index?: number): LuaVal
           console.error("TFUNCTION is a C function that cannot be found in the function allocation table");
       }
       else {
+        // return a LuaFunction
         value = { stackIndex: index };
       }
       break;
