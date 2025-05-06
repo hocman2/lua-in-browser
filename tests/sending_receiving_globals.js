@@ -1,14 +1,15 @@
-import {lua, LuaType} from "lua-in-browser";
+import lua from "lua-in-browser";
+import { LuaType } from "lua-in-browser";
 import assert from "node:assert";
 import fs from "node:fs";
 import util from "node:util";
 
 function setAndGetGlobalPrimitive(L, val) {
-  lua.load(L, "print(myG)", lua.KEEP_CODE_LOADED);
+  const code = lua.prepareCode("print(myG)");
   lua.setGlobal(L, "myG", val);
   console.log("Expects: ", val);
   console.log("Value of global in lua state: ");
-  lua.execute(L);
+  lua.executeCode(L, code);
   return lua.getGlobal(L, "myG");
 }
 
@@ -18,11 +19,11 @@ function assertGlobalPrimitive(type, val, expectedType, expectedVal) {
 }
 
 function setAndGetGlobal(L, dumpTableFile, val) {
-  lua.load(L, dumpTableFile, lua.KEEP_CODE_LOADED);
+  const code = lua.prepareCode(dumpTableFile);
   lua.setGlobal(L, "myG", val);
   console.log("Expects: ", util.inspect(val, {depth: null, colors: true}));
   console.log("Value of global in lua state: ");
-  lua.execute(L);
+  lua.executeCode(L, code);
   return lua.getGlobal(L, "myG");
 }
 
@@ -40,8 +41,8 @@ lua.onModuleReady(() => {
   const L = lua.createState();
 
   const file = fs.readFileSync("./printTable.lua");
-  
-  let [val, type] = setAndGetGlobalPrimitive(L, 3); 
+
+  let [val, type] = setAndGetGlobalPrimitive(L, 3);
   assertGlobalPrimitive(type, val, LuaType.TNUMBER, 3);
 
   [val, type] = setAndGetGlobalPrimitive(L, "Hello, world!");
@@ -52,7 +53,7 @@ lua.onModuleReady(() => {
 
   [val, type] = setAndGetGlobalPrimitive(L, zizi);
   assertGlobalPrimitive(type, val, LuaType.TFUNCTION, zizi);
-  
+
   [val, type] = setAndGetGlobal(L, file, [2, zizi, "Hello, world", false]);
   assertGlobal(type, val, LuaType.TTABLE, [2, zizi, "Hello, world", false]);
 
