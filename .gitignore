@@ -1,4 +1,6 @@
 .swp
 lua-module.wasm
 lua-module.js
+node-pkg/package-lock.json
+node-pkg/pnpm-lock.yaml
 
