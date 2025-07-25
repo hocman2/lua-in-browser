@@ -7,7 +7,10 @@ This is because the Lua library can interact with the system broadly (printing, 
 Emscripten automatically implements WASI for both browser and Node environements, making it a convenient choice at that stage of the project.
 
 - Run the `build.sh` script
-- This will generate the lua-module.wasm file and the JS glue code. They will automatically be moved to the `node-pkg/` folder inside `src` and `dist`
+- This will generate the `lua-module.wasm` file and the JS glue code. They will automatically be moved to the `node-pkg/` folder inside `src` and `dist`
+
+Making the `lua-module.wasm` file fetchable can be tricky depending on your environment, for now there is no universal way to use the node package in an actual project.
+I personnally had to use the `pnpm link` feature in my Vite/Svelte environment instead of the traditional monorepo approach.
 
 ## How to use
 Check out the `node-pkg/src/lua-interface.ts` file.
